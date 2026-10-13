@@ -489,6 +489,10 @@ final class BridgeModel {
   }
 
   private func rollStats() {
+    let decodeFailures = previewDecoder.takeFailures()
+    if decodeFailures.count > 0 {
+      note("decoder: \(decodeFailures.count) frame(s) failed (OSStatus \(decodeFailures.status)); restarting at the next keyframe")
+    }
     fpsIn = framesIn
     fpsOut = framesOut
     kilobytesPerSecond = bytesOut / 1024

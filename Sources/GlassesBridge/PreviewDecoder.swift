@@ -13,10 +13,20 @@ final class PreviewDecoder: Sendable {
     var session: VTDecompressionSession?
     var format: CMFormatDescription?
     var awaitingKeyframe = true
+    var failures = 0
+    var lastFailure: OSStatus = noErr
   }
 
   private let state = OSAllocatedUnfairLock(uncheckedState: State())
   private let context = CIContext()
+
+  /// Decode failures since the last call, and the last error (for the log).
+  func takeFailures() -> (count: Int, status: OSStatus) {
+    state.withLockUnchecked { s in
+      defer { s.failures = 0 }
+      return (s.failures, s.lastFailure)
+    }
+  }
 
   /// Call when frames stop being fed (app backgrounded) so decoding resumes at a keyframe.
   func reset() {
@@ -65,7 +75,17 @@ final class PreviewDecoder: Sendable {
       if status == noErr { pixelBuffer = imageBuffer }
     }
     guard status == noErr, let pixelBuffer else {
-      state.withLockUnchecked { $0.awaitingKeyframe = true }
+      // iOS invalidates decompression sessions, e.g. when the app goes to the
+      // background (kVTInvalidSessionErr). Retrying a dead session fails
+      // forever: drop it and start a new one at the next keyframe.
+      state.withLockUnchecked { s in
+        if let old = s.session { VTDecompressionSessionInvalidate(old) }
+        s.session = nil
+        s.format = nil
+        s.awaitingKeyframe = true
+        s.failures += 1
+        s.lastFailure = status
+      }
       return nil
     }
     latest?.update(pixelBuffer)
